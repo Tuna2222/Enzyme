@@ -3,11 +3,11 @@
 // A handler's failure is the derivative's failure.
 
 module {
-  func.func private @norule(%x: f64) -> f64 {
+  func.func private @norule(%x: f64) -> f64 attributes {enzyme_math = "norule"} {
     return %x : f64
   }
   func.func @f(%x: f64) -> f64 {
-    // expected-error @below {{test forward call handler: no function @norule_jvp}}
+    // expected-error @below {{test forward call handler: no function @norule_fwd_dup}}
     %y = func.call @norule(%x) : (f64) -> f64
     return %y : f64
   }

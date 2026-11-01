@@ -53,25 +53,25 @@ MLIR_CAPI_EXPORTED MlirAttribute enzymeSymbolAttrGet(MlirContext ctx,
 // Custom forward-mode derivatives of calls
 //===----------------------------------------------------------------------===//
 
-/// The derivative under construction, as a forward call handler sees it. It is
-/// valid only during the handler's invocation.
+/// Handle to the derivative that is being built, passed to a forward call
+/// handler. It is valid only while the handler runs.
 typedef struct EnzymeMLIRGradientUtils *EnzymeMLIRGradientUtilsRef;
 
-/// Constructs the forward-mode derivative of `call`, an op of the function
-/// being differentiated, in place of differentiating its callee. It sets the
-/// shadow of every active result of `call` (enzymeGradientUtilsSetDiffe), and
-/// either leaves the call's clone in the derivative to compute the primal
-/// results or replaces them (enzymeGradientUtilsReplaceOrigOpWith). New ops go
-/// before that clone, through enzymeGradientUtilsInsertOperation.
+/// Builds the forward-mode derivative of `call`, an op of the function being
+/// differentiated, instead of differentiating its callee. The handler sets the
+/// shadow of every active result of `call` (enzymeGradientUtilsSetDiffe). It
+/// either keeps the call's clone in the derivative to compute the primal
+/// results or replaces them (enzymeGradientUtilsReplaceOrigOpWith). New ops are
+/// inserted before that clone with enzymeGradientUtilsInsertOperation.
 typedef MlirLogicalResult (*EnzymeMLIRForwardCallHandler)(
     MlirOperation call, EnzymeMLIRGradientUtilsRef gutils, void *userData);
 
-/// Registers `handler` for the forward-mode derivative of every direct call of
-/// a flat symbol whose key is `key`, replacing any handler registered for it.
-/// A call's key is its `enzyme_math` string attribute, else the callee's, else
-/// the callee's name. The registry is process-wide and unsynchronized: register
-/// and unregister handlers only while no pass that looks them up runs, e.g. at
-/// startup. `userData` is passed to the handler.
+/// Registers `handler` under `key`, replacing any handler registered under it.
+/// A direct call of a flat symbol uses the handler for its key: the
+/// `enzyme_math` string attribute on the call, or else the one on the callee.
+/// The callee's name is not a key. The registry is process-wide and not
+/// synchronized: register and unregister handlers only while no pass that looks
+/// them up is running, e.g. at startup. `userData` is passed to the handler.
 MLIR_CAPI_EXPORTED void enzymeRegisterForwardCallHandler(
     MlirStringRef key, EnzymeMLIRForwardCallHandler handler, void *userData);
 
@@ -81,17 +81,19 @@ MLIR_CAPI_EXPORTED void enzymeUnregisterForwardCallHandler(MlirStringRef key);
 MLIR_CAPI_EXPORTED int64_t
 enzymeGradientUtilsGetWidth(EnzymeMLIRGradientUtilsRef gutils);
 
-/// Whether `value`, of the original function, has no derivative.
+/// Whether `value`, a value of the original function, is inactive (has no
+/// derivative).
 MLIR_CAPI_EXPORTED bool
 enzymeGradientUtilsIsConstantValue(EnzymeMLIRGradientUtilsRef gutils,
                                    MlirValue value);
 
-/// The value of the derivative that `value`, of the original function, became.
+/// The value in the derivative that corresponds to `value`, a value of the
+/// original function.
 MLIR_CAPI_EXPORTED MlirValue enzymeGradientUtilsGetNewFromOriginal(
     EnzymeMLIRGradientUtilsRef gutils, MlirValue value);
 
-/// The shadow (tangent) of `value`, of the original function: zero for a
-/// constant value.
+/// The shadow (tangent) of `value`, a value of the original function. It is
+/// zero if `value` is inactive.
 MLIR_CAPI_EXPORTED MlirValue enzymeGradientUtilsInvertPointer(
     EnzymeMLIRGradientUtilsRef gutils, MlirValue value);
 
@@ -99,8 +101,8 @@ MLIR_CAPI_EXPORTED MlirValue enzymeGradientUtilsInvertPointer(
 MLIR_CAPI_EXPORTED MlirType enzymeGradientUtilsGetShadowType(
     EnzymeMLIRGradientUtilsRef gutils, MlirType type);
 
-/// Inserts the detached operation `op` into the derivative, after the ops the
-/// handler inserted before it. Ownership passes to the derivative.
+/// Inserts the detached operation `op` into the derivative, after the ops that
+/// the handler has already inserted. The derivative takes ownership of `op`.
 MLIR_CAPI_EXPORTED void
 enzymeGradientUtilsInsertOperation(EnzymeMLIRGradientUtilsRef gutils,
                                    MlirOperation op);
@@ -110,7 +112,7 @@ MLIR_CAPI_EXPORTED void
 enzymeGradientUtilsSetDiffe(EnzymeMLIRGradientUtilsRef gutils, MlirValue result,
                             MlirValue shadow);
 
-/// Replaces the call's results in the derivative by `values` (one per result)
+/// Replaces the call's results in the derivative with `values` (one per result)
 /// and erases the call's clone. Operations inserted afterwards go where the
 /// clone was.
 MLIR_CAPI_EXPORTED void

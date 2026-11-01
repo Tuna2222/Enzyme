@@ -607,9 +607,9 @@ static FlatSymbolRefAttr getFlatCallee(Operation *op) {
   return dyn_cast_if_present<FlatSymbolRefAttr>(sym);
 }
 
-// The key a forward call handler for `op` is registered under, or null where
-// `op` is not a direct call of a flat symbol: its `enzyme_math` string
-// attribute, else the callee's, else the callee's name.
+// The key under which a forward call handler for `op` is registered: the
+// `enzyme_math` string attribute on `op`, or else the one on its callee. Null
+// if `op` is not a direct call of a flat symbol or has no such attribute.
 static StringAttr getForwardCallHandlerKey(Operation *op) {
   auto callee = getFlatCallee(op);
   if (!callee)
@@ -619,7 +619,7 @@ static StringAttr getForwardCallHandlerKey(Operation *op) {
   if (auto *fn = SymbolTable::lookupNearestSymbolFrom(op, callee))
     if (auto key = fn->getAttrOfType<StringAttr>("enzyme_math"))
       return key;
-  return callee.getAttr();
+  return nullptr;
 }
 
 // The callee of `op`, or null where it is not a direct call to something this
@@ -639,8 +639,8 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
                                           MGradientUtils *gutils) {
   DerivativeMode mode = DerivativeMode::ForwardMode;
 
-  // A registered handler takes precedence over the callee's body, and stands
-  // in for a body that is missing.
+  // A registered handler is used instead of the callee's body, which may also
+  // be missing.
   if (auto key = getForwardCallHandlerKey(orig))
     if (auto *handler = lookupForwardCallHandler(key.getValue()))
       return (*handler)(orig, builder, gutils);

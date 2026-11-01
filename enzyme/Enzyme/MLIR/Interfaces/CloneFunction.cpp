@@ -238,6 +238,10 @@ FunctionOpInterface CloneFunctionWithReturns(
   // instead of a concrete builder for genericity.
   auto NewF = cast<FunctionOpInterface>(F->cloneWithoutRegions());
   SymbolTable::setSymbolName(NewF, name.str());
+  // The derivative is a different function, so it must not share the
+  // primal's forward call handler key. Enzyme's LLVM side does not copy
+  // `enzyme_math` to derivatives either.
+  NewF->removeAttr("enzyme_math");
   SmallVector<Type> resultTypes(FTy.getResults());
   if (auto iface = dyn_cast<AutoDiffFunctionInterface>(*NewF)) {
     iface.transformResultTypes(resultTypes);

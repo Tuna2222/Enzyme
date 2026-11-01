@@ -49,17 +49,16 @@
 
 using namespace mlir;
 
-// For tests of registered forward call handlers, which a frontend would
-// otherwise supply. The handler registered under `<key>` (a callee's name or
-// an `enzyme_math` value) calls `@<key>_jvp` instead of differentiating the
-// callee; that function takes every operand followed by its shadow (a zero one
-// for a constant operand) and returns every result followed by its shadow.
-// With `<key>:tangent` the call's clone stays to compute the primal results,
-// and `@<key>_tangent` takes the same arguments and returns only the shadows.
-// With `<key>:primal-first` the primal results are first replaced by those of
-// `@<key>_primal`, which takes the operands only, and `@<key>_tangent` is
-// called after that.
-enum class TestForwardCallHandlerKind { JVP, Tangent, PrimalFirst };
+// For tests of forward call handlers, which a frontend would otherwise
+// provide. The handler registered under `<key>` calls `@<key>_fwd_dup` instead
+// of differentiating the callee. That function takes every operand followed by
+// its shadow (zero for an inactive operand), and returns every result followed
+// by its shadow. With `<key>:fwd`, the call's clone stays to compute the primal
+// results, and `@<key>_fwd` takes the same arguments and returns only the
+// shadows. With `<key>:primal-first`, the primal results are first replaced by
+// those of `@<key>_primal`, which takes only the operands; then `@<key>_fwd` is
+// called.
+enum class TestForwardCallHandlerKind { FwdDup, Fwd, PrimalFirst };
 
 static FailureOr<func::CallOp> callTestRule(Operation *orig, OpBuilder &builder,
                                             StringRef name, TypeRange types,
@@ -83,19 +82,19 @@ static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
     args.push_back(primal);
     args.push_back(gutils->invertPointerM(operand, builder));
   }
-  SmallVector<Type> types, shadowTypes, jvpTypes;
+  SmallVector<Type> types, shadowTypes, fwdDupTypes;
   for (Value res : orig->getResults()) {
     types.push_back(res.getType());
     shadowTypes.push_back(gutils->getShadowType(res.getType()));
-    jvpTypes.push_back(types.back());
-    jvpTypes.push_back(shadowTypes.back());
+    fwdDupTypes.push_back(types.back());
+    fwdDupTypes.push_back(shadowTypes.back());
   }
 
   SmallVector<Value> primals, shadows;
   switch (kind) {
-  case TestForwardCallHandlerKind::JVP: {
-    auto call =
-        callTestRule(orig, builder, (key + "_jvp").str(), jvpTypes, args);
+  case TestForwardCallHandlerKind::FwdDup: {
+    auto call = callTestRule(orig, builder, (key + "_fwd_dup").str(),
+                             fwdDupTypes, args);
     if (failed(call))
       return failure();
     for (unsigned i = 0, e = orig->getNumResults(); i < e; i++) {
@@ -104,9 +103,9 @@ static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
     }
     break;
   }
-  case TestForwardCallHandlerKind::Tangent: {
-    auto call = callTestRule(orig, builder, (key + "_tangent").str(),
-                             shadowTypes, args);
+  case TestForwardCallHandlerKind::Fwd: {
+    auto call =
+        callTestRule(orig, builder, (key + "_fwd").str(), shadowTypes, args);
     if (failed(call))
       return failure();
     llvm::append_range(shadows, call->getResults());
@@ -118,8 +117,8 @@ static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
     if (failed(primalCall))
       return failure();
     enzyme::replaceForwardCall(orig, primalCall->getResults(), builder, gutils);
-    auto call = callTestRule(orig, builder, (key + "_tangent").str(),
-                             shadowTypes, args);
+    auto call =
+        callTestRule(orig, builder, (key + "_fwd").str(), shadowTypes, args);
     if (failed(call))
       return failure();
     llvm::append_range(shadows, call->getResults());
@@ -130,7 +129,7 @@ static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
   for (auto &&[res, shadow] : llvm::zip_equal(orig->getResults(), shadows))
     if (!gutils->isConstantValue(res))
       gutils->setDiffe(res, shadow, builder);
-  if (kind == TestForwardCallHandlerKind::JVP)
+  if (kind == TestForwardCallHandlerKind::FwdDup)
     enzyme::replaceForwardCall(orig, primals, builder, gutils);
   return success();
 }
@@ -138,12 +137,12 @@ static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
 static llvm::cl::list<std::string> TestForwardCallHandlers(
     "enzyme-test-forward-call-handler", llvm::cl::Hidden,
     llvm::cl::desc("Register a test forward-mode call handler under <key> "
-                   "(or <key>:tangent, <key>:primal-first)"),
+                   "(or <key>:fwd, <key>:primal-first)"),
     llvm::cl::callback([](const std::string &spec) {
       StringRef key = spec;
-      auto kind = TestForwardCallHandlerKind::JVP;
-      if (key.consume_back(":tangent"))
-        kind = TestForwardCallHandlerKind::Tangent;
+      auto kind = TestForwardCallHandlerKind::FwdDup;
+      if (key.consume_back(":fwd"))
+        kind = TestForwardCallHandlerKind::Fwd;
       else if (key.consume_back(":primal-first"))
         kind = TestForwardCallHandlerKind::PrimalFirst;
       std::string name = key.str();
